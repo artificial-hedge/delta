@@ -7,6 +7,7 @@ import { expandTildePath } from "../config.js";
 import type { AgentSessionEvent } from "../core/agent-session.js";
 import type { AgentSessionRuntimeConfig } from "../core/agent-session-config.js";
 import { type AgentCronJob, formatAgentCronJob } from "../core/cron-jobs.js";
+import { parseGoalDuration } from "../core/goals.js";
 import { looksLikeSessionPath } from "../core/session-resolver.js";
 import { DaemonClient, type DaemonClientMessageListener } from "../modes/daemon/daemon-client.js";
 import type { DaemonOutbound, DaemonResponse } from "../modes/daemon/daemon-protocol.js";
@@ -396,9 +397,12 @@ function parseSessionArgs(args: string[]): ParsedSessionArgs {
 	}
 
 	const name = nameParts.join(" ").trim();
-	// Validate: --goal-token-budget without --goal is an error.
+	// Validate: --goal-token-budget / --goal-for without --goal is an error.
 	if (config.initialGoal?.tokenBudget !== undefined && !config.initialGoal.objective) {
 		throw new Error("--goal-token-budget requires --goal");
+	}
+	if (config.initialGoal?.timeBudgetSeconds !== undefined && !config.initialGoal.objective) {
+		throw new Error("--goal-for requires --goal");
 	}
 	return {
 		daemonArgs,
@@ -552,7 +556,11 @@ function parseSessionOption(
 			if (!value.trim()) {
 				throw new Error("--goal requires a non-empty objective");
 			}
-			config.initialGoal = { objective: value, tokenBudget: config.initialGoal?.tokenBudget };
+			config.initialGoal = {
+				objective: value,
+				tokenBudget: config.initialGoal?.tokenBudget,
+				timeBudgetSeconds: config.initialGoal?.timeBudgetSeconds,
+			};
 			// Session-specific flag: do NOT propagate to daemon startup args.
 			// The goal is sent per-create via the config in the daemon request,
 			// so a later no-goal create is not contaminated.
@@ -567,6 +575,18 @@ function parseSessionOption(
 			config.initialGoal = {
 				objective: config.initialGoal?.objective ?? "",
 				tokenBudget: budget,
+				timeBudgetSeconds: config.initialGoal?.timeBudgetSeconds,
+			};
+			// Session-specific flag: do NOT propagate to daemon startup args.
+			return { consumed: 1 };
+		}
+		case "--goal-for": {
+			const value = readValue(arg);
+			const timeBudgetSeconds = parseGoalDuration(value);
+			config.initialGoal = {
+				objective: config.initialGoal?.objective ?? "",
+				tokenBudget: config.initialGoal?.tokenBudget,
+				timeBudgetSeconds,
 			};
 			// Session-specific flag: do NOT propagate to daemon startup args.
 			return { consumed: 1 };

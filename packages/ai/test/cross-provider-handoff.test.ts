@@ -14,6 +14,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "anthropic", model: "claude-sonnet-4-5" },
 	{ provider: "google", model: "gemini-3-flash-preview" },
 	{ provider: "openai", model: "gpt-4o-mini", apiOverride: "openai-completions" },
+	{ provider: "camel-stream", model: "auto" },
 	{ provider: "openai", model: "gpt-5-mini" },
 	{ provider: "openai-codex", model: "gpt-5.2-codex" },
 ];

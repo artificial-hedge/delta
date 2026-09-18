@@ -113,6 +113,14 @@ const ZAI_THINKING_COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "zai",
 };
 
+const CAMEL_STREAM_BASE_URL = "https://stream.camelai.com/v1";
+const CAMEL_STREAM_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: true,
+	maxTokensField: "max_tokens",
+};
+
 const PRIME_INFERENCE_BASE_URL = "https://api.pinference.ai/api/v1";
 const PRIME_INFERENCE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -2241,6 +2249,21 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...vertexModels);
+
+	allModels.push({
+		id: "auto",
+		name: "camelStream",
+		api: "openai-completions",
+		provider: "camel-stream",
+		baseUrl: CAMEL_STREAM_BASE_URL,
+		compat: CAMEL_STREAM_COMPAT,
+		reasoning: true,
+		thinkingLevelMap: { off: "low" },
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 262144,
+		maxTokens: 65536,
+	});
 
 	const primeInferenceModels = await fetchPrimeInferenceModels();
 	allModels.push(...primeInferenceModels);

@@ -10,7 +10,7 @@ export interface SlashCommandInfo {
 	sourceInfo: SourceInfo;
 }
 
-export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "goal", "autonomous"] as const;
+export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "goal", "autonomous", "24x7"] as const;
 
 export type SessionSlashCommandName = (typeof SESSION_SLASH_COMMAND_NAMES)[number];
 
@@ -173,8 +173,8 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	},
 	{
 		name: "goal",
-		description: "Set or view a persistent goal; supports pause, resume, and clear",
-		argumentHint: "[objective]",
+		description: "Set or view a persistent goal; supports --for, pause, resume, and clear",
+		argumentHint: "[--for <duration>] [--budget <tokens>] <objective>",
 		takesArgument: true,
 	},
 	{
@@ -182,6 +182,12 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		description: "Set or view autonomous mode with an optional budget",
 		argumentHint:
 			"[status|off|on [--max-continuations <n>] [--max-turns <n>] [--max-tokens <n>] [--timeout-ms <n>] [--gate <command>]]",
+		takesArgument: true,
+	},
+	{
+		name: "24x7",
+		description: "Run forever until you stop it; keeps choosing the next high-ROI task with risk-weighted decisions",
+		argumentHint: "[on [objective]|off|status]",
 		takesArgument: true,
 	},
 	{
@@ -221,6 +227,8 @@ const BUILTIN_SLASH_COMMAND_ALIASES: ReadonlyArray<BuiltinSlashCommandAlias> = [
 	{ name: "thinking", aliasFor: "effort" },
 	{ name: "rename", aliasFor: "name" },
 	{ name: "side", aliasFor: "btw" },
+	{ name: "always-on", aliasFor: "24x7" },
+	{ name: "24-7", aliasFor: "24x7" },
 ];
 
 function buildBuiltinSlashCommands(): ReadonlyArray<BuiltinSlashCommand> {

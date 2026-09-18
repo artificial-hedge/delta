@@ -432,6 +432,15 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe("camelStream Provider (auto)", () => {
+		it("is in the generated catalog", () => {
+			const llm = getModel("camel-stream", "auto");
+			expect(llm.api).toBe("openai-completions");
+			expect(llm.baseUrl).toBe("https://stream.camelai.com/v1");
+			expect(llm.contextWindow).toBe(262144);
+		});
+	});
+
 	describe.skipIf(!primeInferenceApiKey)("Prime Inference Provider (openai/gpt-5.5)", () => {
 		const llm = getModel("prime-inference", "openai/gpt-5.5");
 

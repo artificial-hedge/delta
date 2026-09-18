@@ -690,7 +690,13 @@ function runtimeConfigFromArgs(
 		// receives this flag via AgentSessionRuntimeConfig and uses it
 		// instead of its own appMode="daemon".
 		serializedRefine: appMode !== "interactive" && appMode !== "daemon",
-		initialGoal: parsed.goal ? { objective: parsed.goal, tokenBudget: parsed.goalTokenBudget } : undefined,
+		initialGoal: parsed.goal
+			? {
+					objective: parsed.goal,
+					tokenBudget: parsed.goalTokenBudget,
+					timeBudgetSeconds: parsed.goalTimeBudgetSeconds,
+				}
+			: undefined,
 	};
 }
 

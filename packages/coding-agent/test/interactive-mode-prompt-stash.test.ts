@@ -556,11 +556,23 @@ describe("InteractiveMode prompt stash", () => {
 	it("routes session-owned commands through canonical prompt admission", async () => {
 		const mode = Object.assign(createSubmitHarness(), { isAgentCompacting: () => true });
 
-		for (const command of ["/compact focus on tools", "/refine --global", "/goal ship it", "/autonomous on"]) {
+		for (const command of [
+			"/compact focus on tools",
+			"/refine --global",
+			"/goal ship it",
+			"/autonomous on",
+			"/24x7 on",
+		]) {
 			await mode.defaultEditor.onSubmit?.(command);
 		}
 
-		for (const command of ["/compact focus on tools", "/refine --global", "/goal ship it", "/autonomous on"]) {
+		for (const command of [
+			"/compact focus on tools",
+			"/refine --global",
+			"/goal ship it",
+			"/autonomous on",
+			"/24x7 on",
+		]) {
 			expect(mode.agentConnection.prompt).toHaveBeenCalledWith(command, {
 				streamingBehavior: "steer",
 				queueIfBusy: true,

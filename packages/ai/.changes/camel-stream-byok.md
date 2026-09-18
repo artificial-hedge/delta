@@ -1,0 +1,1 @@
+- Added camelStream as a built-in OpenAI-compatible provider using `CAMEL_API_KEY` and model `auto`.

@@ -8,6 +8,8 @@ import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from 
 
 export interface AgentAutonomousConfig {
 	enabled?: boolean;
+	/** When true, the host never treats "done", passed gates, or budget exhaustion as a stop. */
+	alwaysOn?: boolean;
 	maxContinuations?: number;
 	maxTurns?: number;
 	maxTokens?: number;
@@ -42,7 +44,9 @@ export interface AgentAutonomousStatus {
 	turnsUsed: number;
 	tokensUsed: number;
 	startedAt?: number;
-	limits: Required<Omit<AgentAutonomousConfig, "enabled" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">>;
+	limits: Required<
+		Omit<AgentAutonomousConfig, "enabled" | "alwaysOn" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">
+	>;
 	gates: Required<AgentAutonomousGateConfig>;
 	gateAttempts: Record<string, number>;
 	lastGateFailure?: AgentAutonomousGateFailure;
@@ -54,7 +58,7 @@ export const DEFAULT_AUTONOMOUS_CONTINUATION_PROMPT =
 	"No human input is available in autonomous mode. Continue working until the host evaluator, verifier, or configured autonomous limits stop the run. If you were asking the user a question, make a reasonable assumption and verify it. If you believe you are blocked, prove it with host-observable evidence, preserve that evidence, and keep looking for safe progress while budget remains. Do not end the session yourself; the verifier/evaluator decides completion when configured gates pass.";
 
 export const DEFAULT_AUTONOMOUS_LIMITS: Required<
-	Omit<AgentAutonomousConfig, "enabled" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">
+	Omit<AgentAutonomousConfig, "enabled" | "alwaysOn" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">
 > = {
 	maxContinuations: 3,
 	maxTurns: 12,
@@ -100,11 +104,14 @@ const MAX_CHILD_PROCESS_OUTPUT_CHARS = 1024 * 1024;
 
 export interface AutonomousRuntimeState {
 	enabled: boolean;
+	alwaysOn: boolean;
 	continuationsUsed: number;
 	turnsUsed: number;
 	tokensUsed: number;
 	startedAt?: number;
-	limits: Required<Omit<AgentAutonomousConfig, "enabled" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">>;
+	limits: Required<
+		Omit<AgentAutonomousConfig, "enabled" | "alwaysOn" | "continuationPrompt" | "gates" | "subagentKeepAliveMs">
+	>;
 	continuationPrompt: string;
 	gates: Required<AgentAutonomousGateConfig>;
 	gateAttempts: Record<string, number>;
@@ -161,6 +168,7 @@ export function createAutonomousRuntimeState(
 	const enabled = config?.enabled === true;
 	return {
 		enabled,
+		alwaysOn: config?.alwaysOn === true,
 		continuationsUsed: 0,
 		turnsUsed: 0,
 		tokensUsed: 0,
@@ -201,6 +209,9 @@ export function setAutonomousEnabled(
 	_options: { cwd?: string } = {},
 ): void {
 	state.enabled = enabled;
+	if (!enabled) {
+		state.alwaysOn = false;
+	}
 	if (enabled) {
 		state.continuationsUsed = 0;
 		state.turnsUsed = 0;
@@ -242,6 +253,9 @@ export function setAutonomousLimits(state: AutonomousRuntimeState, config?: Agen
 	}
 	if (config.subagentKeepAliveMs !== undefined) {
 		state.subagentKeepAliveMs = normalizeSubagentKeepAliveMs(config.subagentKeepAliveMs);
+	}
+	if (config.alwaysOn !== undefined) {
+		state.alwaysOn = config.alwaysOn;
 	}
 }
 
@@ -394,12 +408,15 @@ export async function shouldAutonomouslyContinue(
 	now = Date.now(),
 ): Promise<AutonomousDecision> {
 	options.signal?.throwIfAborted();
-	if (!state.enabled || message.stopReason === "error" || message.stopReason === "aborted") {
+	if (!state.enabled || message.stopReason === "aborted") {
+		return { shouldContinue: false, reason: "not_needed" };
+	}
+	if (message.stopReason === "error" && !state.alwaysOn) {
 		return { shouldContinue: false, reason: "not_needed" };
 	}
 	const gateResult = await refreshAutonomousQualityGates(state, options);
 	options.signal?.throwIfAborted();
-	if (gateResult) {
+	if (gateResult && !state.alwaysOn) {
 		if (gateResult === "passed") {
 			return { shouldContinue: false, reason: "not_needed" };
 		}
@@ -408,7 +425,7 @@ export async function shouldAutonomouslyContinue(
 		}
 		return { shouldContinue: true, reason: "gate_failed" };
 	}
-	if (autonomousLimitReason(state, now)) {
+	if (!state.alwaysOn && autonomousLimitReason(state, now)) {
 		return { shouldContinue: false, reason: "limit_reached" };
 	}
 	return { shouldContinue: true, reason: "missing_terminal_evidence" };

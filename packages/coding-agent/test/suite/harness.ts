@@ -87,7 +87,7 @@ export interface HarnessOptions {
 	autonomous?: AgentAutonomousConfig;
 	autoRefineReviewer?: AutoRefineReviewer;
 	serializedRefine?: boolean;
-	initialGoal?: { objective: string; tokenBudget?: number };
+	initialGoal?: { objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 }
 
 export interface Harness {

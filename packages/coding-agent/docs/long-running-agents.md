@@ -176,6 +176,7 @@ A goal is a durable objective that the harness continues to present across turns
 ```text
 /goal Ship the release and verify every published artifact
 /goal --budget 200000 Complete the repository migration
+/goal --for 10h Stay on the trading desk and keep making progress
 ```
 
 Manage its state with:
@@ -194,7 +195,7 @@ state = await goal.get()
 await goal.complete()
 ```
 
-Goal state records token usage, elapsed time, continuation count, and an optional explicit token budget. The harness keeps prompting an active goal after ordinary assistant turns; only `goal.complete()` marks successful completion. Creating a persistent goal is an explicit user or host action, not something the agent should infer from every task.
+Goal state records token usage, elapsed time, continuation count, an optional token budget, and an optional host-enforced time floor. `/goal --for 10h` (or `prime-agent --goal "..." --goal-for 10h`) requires that much active wall-clock time before `goal.complete()` is accepted. Early complete calls fail, and the harness keeps injecting continuations. The model cannot bluff past the floor. `/goal pause`, `/goal clear`, and token-budget exhaustion still stop the run. The harness keeps prompting an active goal after ordinary assistant turns; only `goal.complete()` marks successful completion, and only after any time floor is met. Creating a persistent goal is an explicit user or host action, not something the agent should infer from every task.
 
 ## Autonomous Mode
 
@@ -251,6 +252,23 @@ Goals and autonomous mode are complementary but different:
 
 - a **goal** stores the objective and its progress state across turns;
 - **autonomous mode** decides whether to inject another continuation based on evidence, gates, and limits.
+
+## 24x7 Always-On
+
+`/24x7 on` (aliases: `/always-on`, `/24-7`) is perpetual autonomy until you stop it. It turns on unlimited autonomous continuations, enables every registered tool, and injects a work charter the model cannot dismiss:
+
+```text
+/24x7 on
+/24x7 on Stay on the desk and keep raising quality
+/24x7 status
+/24x7 off
+```
+
+The host will not stop because the model said it was done, because a quality gate passed, or because tokens, turns, or wall-clock were spent. Only `/24x7 off`, `/autonomous off`, an abort, or shutting the session down ends the loop.
+
+Each turn the model must pick the next action with a risk-weighted self-decision: low-risk local work proceeds immediately; high-risk actions (irreversible destroy, credential theft, leaving the machine to attack other systems, force-pushing main, sending unsolicited mail/chat) are skipped in favor of a safer high-ROI path. If the current work is already strong, the charter requires SOTA polish, then new features.
+
+Prime Agent is not a security sandbox. 24x7 runs with your user permissions: Python, shell, files, subagents, and any connected MCP tools. Review the workspace and stop the run when you want it to stop.
 
 ## Compaction and Continuity
 

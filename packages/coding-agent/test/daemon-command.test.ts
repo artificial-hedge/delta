@@ -18,7 +18,7 @@ const daemonClientMock = vi.hoisted(() => {
 		sessionPath?: string;
 		config?: {
 			extensionFlagValues?: Record<string, boolean | string>;
-			initialGoal?: { objective: string; tokenBudget?: number };
+			initialGoal?: { objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 		};
 	};
 	type Response =
@@ -162,6 +162,15 @@ describe("daemon command", () => {
 			},
 		],
 		[
+			"passes --goal and --goal-for to the create config",
+			["create", "--goal", "Stay on the desk", "--goal-for", "10h", "my-session"],
+			{
+				type: "create",
+				name: "my-session",
+				config: { initialGoal: { objective: "Stay on the desk", timeBudgetSeconds: 36000 } },
+			},
+		],
+		[
 			"supports the send separator after the target for flag-like message text",
 			["send", "worker", "--", "--from", "literal", "--steer"],
 			{
@@ -206,6 +215,7 @@ describe("daemon command", () => {
 			"rejects --goal-token-budget without --goal in daemon create",
 			["create", "--goal-token-budget", "50000", "my-session"],
 		],
+		["rejects --goal-for without --goal in daemon create", ["create", "--goal-for", "10h", "my-session"]],
 	])("%s", async (_name, argv) => {
 		await handleDaemonCommand(["daemon", "--socket", "/tmp/prime-agent.sock", ...argv]);
 
@@ -316,7 +326,7 @@ describe("daemon command", () => {
 		]);
 	});
 
-	it("does not leak --goal/--goal-token-budget into daemon startup args", async () => {
+	it("does not leak --goal/--goal-token-budget/--goal-for into daemon startup args", async () => {
 		// Force canConnectToDaemon to fail so runStart is exercised.
 		daemonClientMock.behavior.connectFails = true;
 		spawnMock.calls.length = 0;
@@ -330,6 +340,8 @@ describe("daemon command", () => {
 			"Leak test goal",
 			"--goal-token-budget",
 			"100",
+			"--goal-for",
+			"10h",
 		]);
 
 		expect(spawnMock.calls.length).toBe(1);
@@ -339,6 +351,8 @@ describe("daemon command", () => {
 		expect(spawnArgs).not.toContain("Leak test goal");
 		expect(spawnArgs).not.toContain("--goal-token-budget");
 		expect(spawnArgs).not.toContain("100");
+		expect(spawnArgs).not.toContain("--goal-for");
+		expect(spawnArgs).not.toContain("10h");
 	});
 
 	it("does not leak goal into default config for a subsequent no-goal create", async () => {

@@ -63,6 +63,7 @@ prime-agent
 |----------|----------------------|------------------|
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
+| camelStream | `CAMEL_API_KEY` | `camel-stream` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | Prime Inference | `PRIME_API_KEY` | `prime-inference` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
@@ -98,6 +99,7 @@ Store credentials in `~/.prime/agent/auth.json`:
 {
   "anthropic": { "type": "api_key", "key": "sk-ant-..." },
   "openai": { "type": "api_key", "key": "sk-..." },
+  "camel-stream": { "type": "api_key", "key": "qaml_live_..." },
   "prime-inference": { "type": "api_key", "key": "..." },
   "deepseek": { "type": "api_key", "key": "sk-..." },
   "google": { "type": "api_key", "key": "..." },
@@ -131,6 +133,12 @@ The `key` field supports three formats:
   ```
 
 OAuth credentials are also stored here after `/login` and managed automatically.
+
+### camelStream
+
+camelStream is a BYOK OpenAI-compatible gateway at `https://stream.camelai.com/v1`. Set `CAMEL_API_KEY` (keys start with `qaml_live_`) or use `/login` and select camelStream. The bundled model id is `auto`; the serving model comes from the Stream fleet with a 260K-token context window.
+
+When `CAMEL_API_KEY` or a stored `camel-stream` key is available, new sessions default to `camel-stream/auto` ahead of other provider defaults. Tokens are billed by the Stream subscription, not per-token provider quotas.
 
 ### Prime Inference
 

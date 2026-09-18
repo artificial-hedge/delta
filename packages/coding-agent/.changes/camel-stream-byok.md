@@ -1,0 +1,3 @@
+- Added camelStream BYOK via `CAMEL_API_KEY` or `/login`, and defaulted new sessions to `camel-stream/auto` when that key is available.
+- Added a host-enforced `/goal --for` time floor so `goal.complete()` is rejected until the requested working time has elapsed.
+- Added `/24x7` to keep working until it is manually stopped, including SOTA polish and new features, without treating token spend as a stop condition.

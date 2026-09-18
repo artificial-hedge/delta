@@ -40,6 +40,7 @@ export const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set([
 	"--autonomous-timeout-ms",
 	"--goal",
 	"--goal-token-budget",
+	"--goal-for",
 ]);
 
 /** Flags that mark the run as a one-shot prompt, so its positional is a message. */

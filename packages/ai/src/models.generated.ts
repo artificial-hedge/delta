@@ -3118,6 +3118,27 @@ export const MODELS = {
 			maxTokens: 100000,
 		} satisfies Model<"azure-openai-responses">,
 	},
+	"camel-stream": {
+		"auto": {
+			id: "auto",
+			name: "camelStream",
+			api: "openai-completions",
+			provider: "camel-stream",
+			baseUrl: "https://stream.camelai.com/v1",
+			compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"maxTokensField":"max_tokens"},
+			reasoning: true,
+			thinkingLevelMap: {"off":"low"},
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 65536,
+		} satisfies Model<"openai-completions">,
+	},
 	"cerebras": {
 		"gemma-4-31b": {
 			id: "gemma-4-31b",

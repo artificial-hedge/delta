@@ -49,7 +49,9 @@ export interface PrimeAgentGoalMeta {
 	status: string;
 	objective?: string;
 	tokenBudget?: number;
+	timeBudgetSeconds?: number;
 	tokensUsed?: number;
+	timeUsedSeconds?: number;
 }
 
 export interface PrimeAgentRefinementMeta {

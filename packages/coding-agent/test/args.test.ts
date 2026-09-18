@@ -177,6 +177,11 @@ const parseCases: Array<[string, string[], Expected]> = [
 		{ goal: "g", goalTokenBudget: 50000 },
 	],
 	[
+		"--goal with --goal-for",
+		["--goal", "stay on the desk", "--goal-for", "10h"],
+		{ goal: "stay on the desk", goalTimeBudgetSeconds: 36000 },
+	],
+	[
 		"session export needs the internal marker",
 		[INTERNAL_RUNTIME_COMMAND_MARKER, "--export", "s.jsonl"],
 		{ export: "s.jsonl" },
@@ -279,6 +284,13 @@ const errorCases: Array<[string, string[], string]> = [
 	["--goal-token-budget without --goal", ["--goal-token-budget", "50000"], "--goal-token-budget requires --goal"],
 	["non-positive --goal-token-budget", ["--goal-token-budget", "0"], "--goal-token-budget must be a positive integer"],
 	["--goal-token-budget without a value", ["--goal-token-budget"], "--goal-token-budget requires a value"],
+	["--goal-for without --goal", ["--goal-for", "10h"], "--goal-for requires --goal"],
+	[
+		"invalid --goal-for duration",
+		["--goal-for", "10"],
+		"Goal time floor must be a duration such as 10h, 90m, or 1h30m.",
+	],
+	["--goal-for without a value", ["--goal-for"], "--goal-for requires a value"],
 ];
 
 const VALUE_FLAGS = ["--provider", "--api-key", "--cwd", "--fork", "--session-dir", "--models", "--daemon-socket"];

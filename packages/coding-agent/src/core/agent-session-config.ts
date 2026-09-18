@@ -42,7 +42,7 @@ export interface AgentSessionRuntimeConfig {
 	 * Ignored for subagent sessions and when the branch already has a persisted
 	 * thread_goal_state entry (idempotent restart/rehydration).
 	 */
-	initialGoal?: { objective: string; tokenBudget?: number };
+	initialGoal?: { objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 }
 
 export type DurableAgentSessionRuntimeConfig = Pick<

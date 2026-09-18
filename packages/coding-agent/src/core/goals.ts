@@ -6,6 +6,8 @@ export const GOAL_CONTEXT_CUSTOM_TYPE = "goal_context";
 export const GOAL_CONTEXT_PREVIEW_LABEL = "Goal context";
 export const GOAL_SKILL_NAME = "goal";
 export const MAX_THREAD_GOAL_OBJECTIVE_CHARS = 4000;
+/** Upper bound for `/goal --for` and `--goal-for` so a typo cannot schedule months of work. */
+export const MAX_GOAL_TIME_BUDGET_SECONDS = 30 * 24 * 60 * 60;
 
 export type GoalStatus = "idle" | "active" | "paused" | "budget_limited" | "complete" | "error";
 export type GoalContextKind = "continuation" | "budget_limit" | "objective_updated";
@@ -22,6 +24,8 @@ export interface GoalState {
 	goalId?: string;
 	objective?: string;
 	tokenBudget?: number;
+	/** Minimum wall-clock seconds the host requires before `goal.complete()` is accepted. */
+	timeBudgetSeconds?: number;
 	tokensUsed: number;
 	timeUsedSeconds: number;
 	continuationsUsed: number;
@@ -37,6 +41,7 @@ export type SerializedGoal = {
 	objective: string;
 	status: Exclude<GoalStatus, "idle">;
 	token_budget?: number;
+	time_budget_seconds?: number;
 	tokens_used: number;
 	time_used_seconds: number;
 	created_at?: number;
@@ -47,6 +52,7 @@ export type SerializedGoal = {
 export type GoalHostResponse = {
 	goal: SerializedGoal | null;
 	remaining_tokens: number | null;
+	remaining_seconds: number | null;
 	completion_budget_report: string | null;
 };
 
@@ -99,6 +105,97 @@ export function validateGoalBudget(value: number | undefined): number | undefine
 	return value;
 }
 
+export function validateGoalTimeBudget(value: number | undefined): number | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+		throw new Error("Goal time floor must be a positive duration such as 10h, 90m, or 1h30m.");
+	}
+	if (value > MAX_GOAL_TIME_BUDGET_SECONDS) {
+		throw new Error(`Goal time floor must be at most ${formatGoalDuration(MAX_GOAL_TIME_BUDGET_SECONDS)}.`);
+	}
+	return value;
+}
+
+/**
+ * Parse a working-duration string into seconds.
+ * Accepts `10h`, `10hrs`, `90m`, `1h30m`, and spaced forms such as `10 hours`.
+ */
+export function parseGoalDuration(value: string): number {
+	const compact = value.trim().toLowerCase().replace(/\s+/g, "");
+	if (!compact) {
+		throw new Error("Goal time floor must be a duration such as 10h, 90m, or 1h30m.");
+	}
+	const token = /(\d+)(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)/g;
+	let seconds = 0;
+	let matched = 0;
+	let lastIndex = 0;
+	for (const part of compact.matchAll(token)) {
+		if (part.index !== lastIndex) {
+			throw new Error("Goal time floor must be a duration such as 10h, 90m, or 1h30m.");
+		}
+		const amount = Number(part[1]);
+		if (!Number.isSafeInteger(amount) || amount <= 0) {
+			throw new Error("Goal time floor must be a duration such as 10h, 90m, or 1h30m.");
+		}
+		seconds += amount * goalDurationUnitSeconds(part[2]!);
+		matched += 1;
+		lastIndex = (part.index ?? 0) + part[0].length;
+	}
+	if (matched === 0 || lastIndex !== compact.length) {
+		throw new Error("Goal time floor must be a duration such as 10h, 90m, or 1h30m.");
+	}
+	return validateGoalTimeBudget(seconds)!;
+}
+
+function goalDurationUnitSeconds(unit: string): number {
+	if (unit.startsWith("d")) {
+		return 24 * 60 * 60;
+	}
+	if (unit.startsWith("h")) {
+		return 60 * 60;
+	}
+	if (unit.startsWith("m")) {
+		return 60;
+	}
+	return 1;
+}
+
+export function formatGoalDuration(totalSeconds: number): string {
+	const seconds = Math.max(0, Math.trunc(totalSeconds));
+	if (seconds < 60) {
+		return `${seconds}s`;
+	}
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	if (minutes < 60) {
+		return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+	}
+	const hours = Math.floor(minutes / 60);
+	const remainingMinutes = minutes % 60;
+	if (hours < 24) {
+		return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes.toString().padStart(2, "0")}m`;
+	}
+	const days = Math.floor(hours / 24);
+	const remainingHours = hours % 24;
+	return remainingHours === 0 ? `${days}d` : `${days}d ${remainingHours}h`;
+}
+
+export function goalTimeFloorRemainingSeconds(goal: GoalState): number {
+	if (goal.timeBudgetSeconds === undefined) {
+		return 0;
+	}
+	return Math.max(0, goal.timeBudgetSeconds - goal.timeUsedSeconds);
+}
+
+export function goalTimeFloorError(goal: GoalState): string {
+	const floor = formatGoalDuration(goal.timeBudgetSeconds ?? 0);
+	const used = formatGoalDuration(goal.timeUsedSeconds);
+	const remaining = formatGoalDuration(goalTimeFloorRemainingSeconds(goal));
+	return `cannot complete goal because the time floor has not been met (${used} of ${floor} elapsed, ${remaining} remaining). Keep working. The host will reject complete() until the floor is reached.`;
+}
+
 export function goalTokenDeltaForUsage(usage: { input: number; output: number }): number {
 	return Math.max(0, usage.input) + Math.max(0, usage.output);
 }
@@ -133,16 +230,19 @@ export function goalHostResponse(goal: GoalState, includeCompletionReport: boole
 		return {
 			goal: null,
 			remaining_tokens: null,
+			remaining_seconds: null,
 			completion_budget_report: null,
 		};
 	}
 
 	const remainingTokens = goal.tokenBudget === undefined ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed);
+	const remainingSeconds = goal.timeBudgetSeconds === undefined ? null : goalTimeFloorRemainingSeconds(goal);
 	const serializedGoal: SerializedGoal = {
 		goal_id: goal.goalId,
 		objective: goal.objective,
 		status: goal.status,
 		token_budget: goal.tokenBudget,
+		time_budget_seconds: goal.timeBudgetSeconds,
 		tokens_used: goal.tokensUsed,
 		time_used_seconds: goal.timeUsedSeconds,
 		created_at: goal.createdAt,
@@ -152,6 +252,7 @@ export function goalHostResponse(goal: GoalState, includeCompletionReport: boole
 	return {
 		goal: serializedGoal,
 		remaining_tokens: remainingTokens,
+		remaining_seconds: remainingSeconds,
 		completion_budget_report:
 			includeCompletionReport && goal.status === "complete" ? completionBudgetReport(goal) : null,
 	};
@@ -186,13 +287,16 @@ export function createGoalContextMessage(
 }
 
 export function formatGoalUsage(goal: GoalState): string | undefined {
+	const parts: string[] = [];
 	if (goal.tokenBudget !== undefined) {
-		return `${goal.tokensUsed} / ${goal.tokenBudget} tokens`;
+		parts.push(`${goal.tokensUsed} / ${goal.tokenBudget} tokens`);
 	}
-	if (goal.timeUsedSeconds <= 0) {
-		return undefined;
+	if (goal.timeBudgetSeconds !== undefined) {
+		parts.push(`${formatGoalDuration(goal.timeUsedSeconds)} / ${formatGoalDuration(goal.timeBudgetSeconds)}`);
+	} else if (goal.timeUsedSeconds > 0) {
+		parts.push(formatGoalDuration(goal.timeUsedSeconds));
 	}
-	return `${goal.timeUsedSeconds}s`;
+	return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 function goalContextPrompt(goal: GoalState, kind: GoalContextKind): string {
@@ -227,12 +331,12 @@ Goal state:
 - tokens used: ${goal.tokensUsed}
 - token budget: ${budget}
 - remaining tokens: ${remaining}
-
+${timeFloorPromptLines(goal)}
 The goal persists across turns. Ending one turn does not reduce or redefine the objective. If the goal is not complete yet, make concrete progress toward the full objective.
 
-Before marking the goal complete, audit the current state against every requirement in the objective. Do not rely on intent, partial progress, memory of earlier work, or a plausible final answer as proof of completion. If the objective is achieved, run \`await goal.complete()\` in the Python REPL so usage accounting is preserved.
+Before marking the goal complete, audit the current state against every requirement in the objective. Do not rely on intent, partial progress, memory of earlier work, or a plausible final answer as proof of completion. If the objective is achieved and the time floor is met, run \`await goal.complete()\` in the Python REPL so usage accounting is preserved.
 
-Do not call \`goal.complete()\` unless the goal is complete. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work.`;
+Do not call \`goal.complete()\` unless the goal is complete. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work.${timeFloorDiscipline(goal)}`;
 }
 
 function budgetLimitPrompt(goal: GoalState): string {
@@ -250,10 +354,10 @@ Goal state:
 - tokens used: ${goal.tokensUsed}
 - token budget: ${budget}
 - time used seconds: ${goal.timeUsedSeconds}
-
+${timeFloorPromptLines(goal)}
 The system has marked the goal budget_limited. Do not start new substantive work. Wrap up this turn soon with progress made, remaining work, blockers, and a concrete next step.
 
-Do not run \`await goal.complete()\` unless the goal is actually complete.`;
+Do not run \`await goal.complete()\` unless the goal is actually complete and the time floor is met.`;
 }
 
 function objectiveUpdatedPrompt(goal: GoalState): string {
@@ -273,8 +377,8 @@ Goal state:
 - tokens used: ${goal.tokensUsed}
 - token budget: ${budget}
 - remaining tokens: ${remaining}
-
-Adjust the current turn to pursue the updated objective. Do not run \`await goal.complete()\` unless the updated goal is actually complete.`;
+${timeFloorPromptLines(goal)}
+Adjust the current turn to pursue the updated objective. Do not run \`await goal.complete()\` unless the updated goal is actually complete and the time floor is met.${timeFloorDiscipline(goal)}`;
 }
 
 function completionBudgetReport(goal: GoalState): string | null {
@@ -282,13 +386,43 @@ function completionBudgetReport(goal: GoalState): string | null {
 	if (goal.tokenBudget !== undefined) {
 		parts.push(`tokens used: ${goal.tokensUsed} of ${goal.tokenBudget}`);
 	}
-	if (goal.timeUsedSeconds > 0) {
-		parts.push(`time used: ${goal.timeUsedSeconds} seconds`);
+	if (goal.timeBudgetSeconds !== undefined) {
+		parts.push(
+			`time used: ${formatGoalDuration(goal.timeUsedSeconds)} of ${formatGoalDuration(goal.timeBudgetSeconds)}`,
+		);
+	} else if (goal.timeUsedSeconds > 0) {
+		parts.push(`time used: ${formatGoalDuration(goal.timeUsedSeconds)}`);
 	}
 	if (parts.length === 0) {
 		return null;
 	}
 	return `Goal achieved. Report final budget usage to the user: ${parts.join("; ")}.`;
+}
+
+function timeFloorPromptLines(goal: GoalState): string {
+	if (goal.timeBudgetSeconds === undefined) {
+		return "";
+	}
+	const remaining = goalTimeFloorRemainingSeconds(goal);
+	return `- time used: ${formatGoalDuration(goal.timeUsedSeconds)}
+- time floor: ${formatGoalDuration(goal.timeBudgetSeconds)}
+- remaining required time: ${remaining === 0 ? "0 (floor met)" : formatGoalDuration(remaining)}
+`;
+}
+
+function timeFloorDiscipline(goal: GoalState): string {
+	if (goal.timeBudgetSeconds === undefined) {
+		return "";
+	}
+	const remaining = goalTimeFloorRemainingSeconds(goal);
+	if (remaining > 0) {
+		return `
+
+This is a host-enforced time-bound goal. \`await goal.complete()\` will fail until ${formatGoalDuration(remaining)} more working time has elapsed. Do not claim the goal is finished, do not idle, and do not stop early. Keep making concrete progress until the remaining required time is 0.`;
+	}
+	return `
+
+The required working duration has been met. You may call \`await goal.complete()\` only if every requirement in the objective is actually achieved.`;
 }
 
 function escapeXmlText(input: string): string {

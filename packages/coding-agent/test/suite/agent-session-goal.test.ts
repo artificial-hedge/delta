@@ -196,6 +196,7 @@ describe("AgentSession goals", () => {
 		expect(harness.session.handleGoalHostRequest("goal.get")).toEqual({
 			goal: null,
 			remaining_tokens: null,
+			remaining_seconds: null,
 			completion_budget_report: null,
 		});
 
@@ -428,6 +429,77 @@ describe("AgentSession goals", () => {
 		expect(harness.eventsOfType("goal_update").at(-1)?.goal.status).toBe("idle");
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
+
+	it("rejects goal.complete until a time-bound goal has worked for the requested duration", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		try {
+			const harness = await createGoalHarness();
+			const created = harness.session.handleGoalHostRequest("goal.create", {
+				objective: "stay on the desk",
+				time_budget_seconds: 10 * 3600,
+			});
+			expect(created).toMatchObject({
+				remaining_seconds: 10 * 3600,
+				goal: { time_budget_seconds: 10 * 3600, status: "active" },
+			});
+			expect(() => harness.session.handleGoalHostRequest("goal.complete")).toThrow(/time floor/i);
+			expect(harness.session.goalState).toMatchObject({
+				active: true,
+				status: "active",
+				timeBudgetSeconds: 10 * 3600,
+			});
+
+			vi.setSystemTime(Date.now() + 10 * 3600 * 1000);
+			const completed = harness.session.handleGoalHostRequest("goal.complete");
+			expect(completed.goal).toMatchObject({ status: "complete", time_budget_seconds: 10 * 3600 });
+			expect(completed.goal?.time_used_seconds).toBeGreaterThanOrEqual(10 * 3600);
+			expect(completed.remaining_seconds).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("starts a time-bound goal from /goal --for and keeps the floor in context", async () => {
+		const waiting = createWaitingTool();
+		const harness = await createGoalHarness([waiting.tool]);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+
+		const waitForStart = waiting.waitForStart(harness);
+		const promptPromise = harness.session.prompt("/goal --for 10h stay on the desk");
+		await waitForStart;
+
+		expect(harness.session.goalState).toMatchObject({
+			active: true,
+			status: "active",
+			objective: "stay on the desk",
+			timeBudgetSeconds: 10 * 3600,
+		});
+		expect(getMessageText(goalContextMessages(harness)[0])).toMatch(/time floor: 10h/i);
+
+		await harness.session.prompt("/goal pause");
+		waiting.release();
+		await promptPromise;
+		expect(harness.session.goalState.status).toBe("paused");
+	});
+
+	it.each(["/goal --for 10 task", "/goal --for yesterday task", "/goal --for"])(
+		"rejects malformed goal time floor %s",
+		async (command) => {
+			const harness = await createHarness();
+			harnesses.push(harness);
+			harness.setResponses([fauxAssistantMessage("unused")]);
+
+			await harness.session.prompt(command);
+
+			expect(harness.session.messages.at(-1)).toMatchObject({
+				role: "custom",
+				customType: "session_slash_command_result",
+				details: { success: false },
+			});
+			expect(harness.session.goalState).toMatchObject({ active: false, status: "idle" });
+			expect(harness.getPendingResponseCount()).toBe(1);
+		},
+	);
 
 	it.each(["/goal --budget=1abc task", "/goal --budget 1.5 task", "/goal --budget 1e6 task"])(
 		"rejects malformed goal budget %s",

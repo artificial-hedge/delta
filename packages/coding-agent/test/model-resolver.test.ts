@@ -36,6 +36,7 @@ const allModels = [sonnet, gpt4o, qwenExacto, gpt4oExtended];
 
 const primeInference = (id: string) =>
 	model({ id, provider: "prime-inference", baseUrl: "https://api.pinference.ai/api/v1" });
+const camelStream = (id = "auto") => model({ id, provider: "camel-stream", baseUrl: "https://stream.camelai.com/v1" });
 const zaiDirect = model({ id: "glm-5", provider: "zai", baseUrl: "https://open.bigmodel.cn/api/paas/v4" });
 const zaiGateway = model({ id: "zai/glm-5", provider: "vercel-ai-gateway", baseUrl: "https://ai-gateway.vercel.sh" });
 
@@ -216,6 +217,7 @@ describe("default model selection", () => {
 	});
 
 	test.each<[string, AnyModel[], string]>([
+		["prefers camelStream over Prime Inference", [sonnet, primeInference("z-ai/glm-5.3"), camelStream()], "auto"],
 		[
 			"prefers the Prime Inference default",
 			[sonnet, primeInference("z-ai/glm-5.2"), primeInference("z-ai/glm-5.3")],

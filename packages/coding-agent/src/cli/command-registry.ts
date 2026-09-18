@@ -225,6 +225,7 @@ const TOP_LEVEL_OPTION_GROUPS: ReadonlyArray<{ heading: string; options: readonl
 			["--no-session", "Do not save the session"],
 			["--goal <objective>", "Seed a persistent goal for a new root session"],
 			["--goal-token-budget <n>", "Set a positive token budget for --goal"],
+			["--goal-for <duration>", "Require --goal to keep working for a duration such as 10h"],
 		],
 	},
 	{

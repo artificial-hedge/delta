@@ -15,6 +15,7 @@ import { isPrivatePrimeInferenceModel } from "./prime-inference-models.js";
 const log = getLogger("coding-agent.model-resolver");
 
 export const PRIME_INFERENCE_DEFAULT_MODEL_ID = "z-ai/glm-5.3";
+export const CAMEL_STREAM_DEFAULT_MODEL_ID = "auto";
 
 /**
  * How long a session-model restore may wait for in-flight Prime Inference
@@ -36,6 +37,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	openai: "gpt-5.4",
 	"azure-openai-responses": "gpt-5.4",
 	"openai-codex": "gpt-5.5",
+	"camel-stream": CAMEL_STREAM_DEFAULT_MODEL_ID,
 	"prime-inference": PRIME_INFERENCE_DEFAULT_MODEL_ID,
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
@@ -196,6 +198,13 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 }
 
 function findPreferredDefaultModel(availableModels: Model<Api>[]): Model<Api> | undefined {
+	const camelStreamDefault = availableModels.find(
+		(model) => model.provider === "camel-stream" && model.id === CAMEL_STREAM_DEFAULT_MODEL_ID,
+	);
+	if (camelStreamDefault) {
+		return camelStreamDefault;
+	}
+
 	const primeInferenceDefault = availableModels.find(
 		(model) => model.provider === "prime-inference" && model.id === PRIME_INFERENCE_DEFAULT_MODEL_ID,
 	);

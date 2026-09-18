@@ -4,6 +4,7 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { APP_NAME } from "../config.js";
+import { parseGoalDuration } from "../core/goals.js";
 import { THINKING_LEVELS } from "../core/thinking-levels.js";
 
 export type Mode = "text" | "json" | "rpc" | "acp" | "daemon";
@@ -50,6 +51,7 @@ export interface Args {
 	autonomousTimeoutMs?: number;
 	goal?: string;
 	goalTokenBudget?: number;
+	goalTimeBudgetSeconds?: number;
 	listModels?: string | true;
 	offline?: boolean;
 	verbose?: boolean;
@@ -315,6 +317,17 @@ export function parseArgs(args: string[]): Args {
 			if (hasRequiredOptionValue(args, i, arg, result)) {
 				result.goalTokenBudget = parsePositiveInt(args[++i], "--goal-token-budget", result);
 			}
+		} else if (arg === "--goal-for") {
+			if (hasRequiredOptionValue(args, i, arg, result)) {
+				try {
+					result.goalTimeBudgetSeconds = parseGoalDuration(args[++i]!);
+				} catch (error) {
+					result.diagnostics.push({
+						type: "error",
+						message: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
 		} else if (arg === "--list-models") {
 			const hasSearch = i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@");
 			if (!internalRuntimeCommand) {
@@ -364,6 +377,12 @@ export function parseArgs(args: string[]): Args {
 		result.diagnostics.push({
 			type: "error",
 			message: "--goal-token-budget requires --goal",
+		});
+	}
+	if (result.goalTimeBudgetSeconds !== undefined && !result.goal) {
+		result.diagnostics.push({
+			type: "error",
+			message: "--goal-for requires --goal",
 		});
 	}
 

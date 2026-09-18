@@ -87,6 +87,7 @@ Select the xAI subscription entry in `/login` to sign in. Model access depends o
 **API keys:**
 - Anthropic
 - OpenAI
+- camelStream (`CAMEL_API_KEY`; default when that key is set)
 - Prime Inference
 - Azure OpenAI
 - DeepSeek

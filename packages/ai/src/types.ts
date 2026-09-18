@@ -24,6 +24,7 @@ export type KnownProvider =
 	| "openai"
 	| "azure-openai-responses"
 	| "openai-codex"
+	| "camel-stream"
 	| "prime-inference"
 	| "deepseek"
 	| "github-copilot"

@@ -367,6 +367,7 @@ prime-agent --tools ipython -p "Review the code"
 | `PI_SKIP_VERSION_CHECK` | Skip the Prime Agent version update check at startup. This prevents the release manifest request |
 | `PRIME_AGENT_DOWNLOAD_BASE_URL` | Override the Prime Agent release manifest and tarball base URL |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
+| `CAMEL_API_KEY` | camelStream API key; when set, new sessions default to `camel-stream/auto` |
 | `PRIME_API_KEY` | Prime Inference API key; also used for trace sharing when it has `agent_traces` scope |
 | `PRIME_TEAM_ID` | Override the Prime Inference team request header without changing the saved Agent team |
 | `PRIME_AGENT_INFERENCE_API_BASE_URL` | Override Agent authentication and team API URLs, not model inference URLs; defaults to production |

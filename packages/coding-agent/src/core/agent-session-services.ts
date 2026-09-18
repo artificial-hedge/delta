@@ -80,7 +80,7 @@ export interface AgentSessionCreationOptions {
 	serializedRefine?: boolean;
 	executionMode?: AgentExecutionMode;
 	telemetryDisabled?: true;
-	initialGoal?: { objective: string; tokenBudget?: number };
+	initialGoal?: { objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 }
 
 export interface CreateAgentSessionFromServicesOptions extends AgentSessionCreationOptions {

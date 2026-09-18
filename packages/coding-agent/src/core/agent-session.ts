@@ -73,6 +73,17 @@ import {
 	ORCHESTRATION_HEARTBEAT_SKILL_NAME,
 } from "./agent-observe.js";
 import {
+	ALWAYS_ON_CONTEXT_CUSTOM_TYPE,
+	ALWAYS_ON_STATE_CUSTOM_TYPE,
+	type AlwaysOnState,
+	alwaysOnAutonomousConfig,
+	createAlwaysOnContextMessage,
+	emptyAlwaysOnState,
+	formatAlwaysOnStatus,
+	isPersistedAlwaysOnState,
+	parseAlwaysOnSlashCommand,
+} from "./always-on.js";
+import {
 	addLoginGuidanceToAuthError,
 	formatAuthenticationFailedMessage,
 	formatNoApiKeyFoundMessage,
@@ -165,11 +176,15 @@ import {
 	type GoalState,
 	type GoalStatus,
 	goalHostResponse,
+	goalTimeFloorError,
+	goalTimeFloorRemainingSeconds,
 	goalTokenDeltaForUsage,
 	isPersistedGoalState,
 	normalizeGoalState,
+	parseGoalDuration,
 	validateGoalBudget,
 	validateGoalObjective,
+	validateGoalTimeBudget,
 } from "./goals.js";
 import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.js";
 import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.js";
@@ -553,7 +568,7 @@ export interface AgentSessionConfig {
 	 * Initial goal to seed at session creation. Only applied when rlmDepth
 	 * is 0 and no persisted thread_goal_state entry exists in the branch.
 	 */
-	initialGoal?: { objective: string; tokenBudget?: number };
+	initialGoal?: { objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 }
 
 export interface ExtensionBindings {
@@ -991,7 +1006,7 @@ type GoalSlashCommand =
 	| { kind: "clear" }
 	| { kind: "pause" }
 	| { kind: "resume" }
-	| { kind: "start"; objective: string; tokenBudget?: number };
+	| { kind: "start"; objective: string; tokenBudget?: number; timeBudgetSeconds?: number };
 
 type AutonomousSlashCommand = { kind: "status" } | { kind: "on"; config?: AgentAutonomousConfig } | { kind: "off" };
 
@@ -1130,6 +1145,68 @@ function parseGoalBudgetValue(value: string): number {
 		throw new Error("Goal token budget must be a positive integer.");
 	}
 	return budget;
+}
+
+const GOAL_TIME_FLAGS = new Set(["--for", "--time", "--time-budget"]);
+const GOAL_TOKEN_FLAGS = new Set(["--budget", "--token-budget"]);
+const GOAL_START_USAGE = "Usage: /goal [--for <duration>] [--budget <tokens>] <objective>";
+
+function splitGoalStartFlag(token: string): { name: string; attachedValue?: string } | undefined {
+	const separator = token.indexOf("=");
+	const name = separator >= 0 ? token.slice(0, separator) : token;
+	if (!GOAL_TIME_FLAGS.has(name) && !GOAL_TOKEN_FLAGS.has(name)) {
+		return undefined;
+	}
+	return { name, attachedValue: separator >= 0 ? token.slice(separator + 1) : undefined };
+}
+
+function parseGoalStartFlags(rest: string): {
+	objective: string;
+	tokenBudget?: number;
+	timeBudgetSeconds?: number;
+} {
+	let remaining = rest.trim();
+	let tokenBudget: number | undefined;
+	let timeBudgetSeconds: number | undefined;
+	while (remaining.length > 0) {
+		const firstToken = remaining.split(/\s+/, 1)[0] ?? "";
+		const flag = splitGoalStartFlag(firstToken);
+		if (!flag) {
+			break;
+		}
+		let valueText: string;
+		if (flag.attachedValue !== undefined) {
+			valueText = flag.attachedValue;
+			remaining = remaining.slice(firstToken.length).trim();
+		} else {
+			const withoutFlag = remaining.slice(firstToken.length).trimStart();
+			const nextSpace = withoutFlag.search(/\s/);
+			if (nextSpace < 0) {
+				throw new Error(GOAL_START_USAGE);
+			}
+			valueText = withoutFlag.slice(0, nextSpace);
+			remaining = withoutFlag.slice(nextSpace + 1).trim();
+		}
+		if (GOAL_TIME_FLAGS.has(flag.name)) {
+			if (timeBudgetSeconds !== undefined) {
+				throw new Error("Goal time floor was specified more than once.");
+			}
+			timeBudgetSeconds = parseGoalDuration(valueText);
+		} else {
+			if (tokenBudget !== undefined) {
+				throw new Error("Goal token budget was specified more than once.");
+			}
+			tokenBudget = parseGoalBudgetValue(valueText);
+		}
+	}
+	if (!remaining) {
+		throw new Error(GOAL_START_USAGE);
+	}
+	return {
+		objective: validateGoalObjective(remaining),
+		tokenBudget,
+		timeBudgetSeconds,
+	};
 }
 
 const AUTONOMOUS_STATUS_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
@@ -1428,6 +1505,7 @@ export class AgentSession {
 	private _goalAccountedAssistantMessages = new WeakSet<AssistantMessage>();
 	private _goalAbortInProgress = false;
 	private _autonomousState: AutonomousRuntimeState;
+	private _alwaysOnState: AlwaysOnState = emptyAlwaysOnState();
 	private _autonomousContinuationSuppressionDepth = 0;
 	private _autonomousContinuationSuppressedMessages = new WeakSet<AgentMessage>();
 	// Held autonomous continuation owed while descendant work runs; mirrors
@@ -1670,6 +1748,10 @@ export class AgentSession {
 			cwd: this._cwd,
 			defaultLimits: this.settingsManager.getAutonomousLimits(),
 		});
+		this._alwaysOnState = this._loadPersistedAlwaysOnState();
+		if (this._alwaysOnState.enabled) {
+			this._applyAlwaysOnAutonomousPolicy();
+		}
 		this._goalState = this._loadPersistedGoalState();
 		// Seed initial goal from CLI --goal flag, but only for top-level sessions
 		// and only when the branch contains only bootstrap entry types (model_change,
@@ -1677,7 +1759,10 @@ export class AgentSession {
 		// thread_goal_state. This prevents reseeding after clear/complete/error
 		// or restart/rehydration of a session that already has messages or a goal.
 		if (this._rlmDepth === 0 && config.initialGoal && this._isBranchSeedable()) {
-			this._goalState = this._startGoal(config.initialGoal.objective, config.initialGoal.tokenBudget);
+			this._goalState = this._startGoal(config.initialGoal.objective, {
+				tokenBudget: config.initialGoal.tokenBudget,
+				timeBudgetSeconds: config.initialGoal.timeBudgetSeconds,
+			});
 			// Goal context is the model's only source of goal visibility; action
 			// admission is unavailable mid-construction, so ride the next turn.
 			this._pendingNextTurnMessages.push(createGoalContextMessage(this._goalState, "continuation"));
@@ -2231,9 +2316,13 @@ export class AgentSession {
 		this._emitQueueUpdate();
 	}
 
-	private _startGoal(objectiveText: string, tokenBudget: number | undefined): GoalState {
+	private _startGoal(
+		objectiveText: string,
+		budgets: { tokenBudget?: number; timeBudgetSeconds?: number } = {},
+	): GoalState {
 		const objective = validateGoalObjective(objectiveText);
-		const budget = validateGoalBudget(tokenBudget);
+		const budget = validateGoalBudget(budgets.tokenBudget);
+		const timeBudgetSeconds = validateGoalTimeBudget(budgets.timeBudgetSeconds);
 		const now = Date.now();
 		const goal: GoalState = {
 			active: true,
@@ -2241,6 +2330,7 @@ export class AgentSession {
 			goalId: randomUUID(),
 			objective,
 			tokenBudget: budget,
+			timeBudgetSeconds,
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			continuationsUsed: 0,
@@ -2362,36 +2452,12 @@ export class AgentSession {
 			return { kind: "resume" };
 		}
 
-		let tokenBudget: number | undefined;
-		let objective = rest;
-		const firstToken = rest.split(/\s+/, 1)[0] ?? "";
-		if (
-			firstToken === "--budget" ||
-			firstToken === "--token-budget" ||
-			firstToken.startsWith("--budget=") ||
-			firstToken.startsWith("--token-budget=")
-		) {
-			let valueText: string;
-			if (firstToken === "--budget" || firstToken === "--token-budget") {
-				const withoutFlag = rest.slice(firstToken.length).trimStart();
-				const nextSpace = withoutFlag.search(/\s/);
-				if (nextSpace < 0) {
-					throw new Error("Usage: /goal [--budget <tokens>] <objective>");
-				}
-				valueText = withoutFlag.slice(0, nextSpace);
-				objective = withoutFlag.slice(nextSpace + 1).trim();
-			} else {
-				const separator = firstToken.indexOf("=");
-				valueText = firstToken.slice(separator + 1);
-				objective = rest.slice(firstToken.length).trim();
-			}
-			tokenBudget = parseGoalBudgetValue(valueText);
-		}
-
+		const parsed = parseGoalStartFlags(rest);
 		return {
 			kind: "start",
-			objective: validateGoalObjective(objective),
-			tokenBudget,
+			objective: parsed.objective,
+			tokenBudget: parsed.tokenBudget,
+			timeBudgetSeconds: parsed.timeBudgetSeconds,
 		};
 	}
 
@@ -2478,8 +2544,124 @@ export class AgentSession {
 			setAutonomousEnabled(this._autonomousState, false);
 			this._clearQueuedAutonomousContinuations();
 			this._clearAutonomousContinuationAwait();
+			if (this._alwaysOnState.enabled) {
+				this._setAlwaysOnState(emptyAlwaysOnState());
+			}
 		}
 		this._emitAutonomousStatus();
+		return true;
+	}
+
+	get alwaysOnState(): AlwaysOnState {
+		return { ...this._alwaysOnState };
+	}
+
+	private _loadPersistedAlwaysOnState(): AlwaysOnState {
+		const branch = this.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (
+				entry.type === "custom" &&
+				entry.customType === ALWAYS_ON_STATE_CUSTOM_TYPE &&
+				isPersistedAlwaysOnState(entry.data)
+			) {
+				return entry.data;
+			}
+		}
+		return emptyAlwaysOnState();
+	}
+
+	private _setAlwaysOnState(next: AlwaysOnState): void {
+		this._alwaysOnState = {
+			...next,
+			updatedAt: Date.now(),
+		};
+		this.sessionManager.appendCustomEntry(ALWAYS_ON_STATE_CUSTOM_TYPE, this._alwaysOnState);
+		this.sessionManager.flushNow();
+	}
+
+	private _applyAlwaysOnAutonomousPolicy(): void {
+		const config = alwaysOnAutonomousConfig(this._alwaysOnState.objective);
+		setAutonomousEnabled(this._autonomousState, true, { cwd: this._cwd });
+		setAutonomousLimits(this._autonomousState, config);
+		this._disarmAutonomousSubagentKeepAlive();
+		if (this._autonomousContinuationAwaitsRlmWork) {
+			this._armAutonomousSubagentKeepAlive();
+		}
+	}
+
+	private _ensureAlwaysOnRuntimeActive(): void {
+		const names = new Set([...this.getActiveToolNames(), ...this.getAllTools().map((tool) => tool.name)]);
+		if (this._toolRegistry.get("ipython")) {
+			names.add("ipython");
+		}
+		this.setActiveToolsByName([...names]);
+	}
+
+	private _queueAlwaysOnContext(): void {
+		const message = createAlwaysOnContextMessage(this._alwaysOnState);
+		const normalized = normalizeMessageContent(message.content);
+		const action = this._createPreparedTurnAction("followUp", normalized.text, normalized.images, {
+			message,
+			resumeIfIdle: true,
+			priority: "pinned",
+		});
+		this._admitSessionInput(action, { front: true, wake: false });
+	}
+
+	private _emitAlwaysOnStatus(): void {
+		const message = {
+			role: "custom" as const,
+			customType: "always_on_status",
+			content: formatAlwaysOnStatus(this._alwaysOnState),
+			display: true,
+			details: this._alwaysOnState,
+			timestamp: Date.now(),
+		} satisfies CustomMessage<AlwaysOnState>;
+		this.agent.state.messages.push(message);
+		this.sessionManager.appendCustomMessageEntry(
+			message.customType,
+			message.content,
+			message.display,
+			message.details,
+		);
+		this._emit({ type: "message_start", message });
+		this._emit({ type: "message_end", message });
+	}
+
+	private async _handleAlwaysOnSlashCommand(text: string): Promise<boolean> {
+		const command = parseSessionSlashCommand(text);
+		if (command?.name !== "24x7") {
+			return false;
+		}
+		const parsed = parseAlwaysOnSlashCommand(command.args);
+		if (parsed.kind === "status") {
+			this._emitAlwaysOnStatus();
+			return true;
+		}
+		if (parsed.kind === "off") {
+			this._setAlwaysOnState(emptyAlwaysOnState());
+			setAutonomousEnabled(this._autonomousState, false);
+			this._clearQueuedAutonomousContinuations();
+			this._clearAutonomousContinuationAwait();
+			this.agent.removeQueuedMessages(
+				(message) => message.role === "custom" && message.customType === ALWAYS_ON_CONTEXT_CUSTOM_TYPE,
+			);
+			this._emitAlwaysOnStatus();
+			return true;
+		}
+		if (!this.isStreaming) {
+			await this._validateCanStartAgentRun();
+		}
+		this._ensureAlwaysOnRuntimeActive();
+		this._setAlwaysOnState({
+			enabled: true,
+			objective: parsed.objective,
+			startedAt: Date.now(),
+		});
+		this._applyAlwaysOnAutonomousPolicy();
+		this._queueAlwaysOnContext();
+		this._emitAlwaysOnStatus();
 		return true;
 	}
 
@@ -2869,7 +3051,10 @@ export class AgentSession {
 		}
 		this._ensureGoalRuntimeActive();
 		this._clearQueuedGoalContexts();
-		this._startGoal(command.objective, command.tokenBudget);
+		this._startGoal(command.objective, {
+			tokenBudget: command.tokenBudget,
+			timeBudgetSeconds: command.timeBudgetSeconds,
+		});
 		await this._runOrQueueGoalContext(previousWasActive ? "objective_updated" : "continuation", images);
 		return true;
 	}
@@ -3685,7 +3870,13 @@ export class AgentSession {
 				if (payload.token_budget !== undefined && typeof payload.token_budget !== "number") {
 					throw new Error("goal.create token_budget must be an integer when provided");
 				}
-				return goalHostResponse(this._createGoalFromHost(payload.objective, payload.token_budget), false);
+				if (payload.time_budget_seconds !== undefined && typeof payload.time_budget_seconds !== "number") {
+					throw new Error("goal.create time_budget_seconds must be an integer when provided");
+				}
+				return goalHostResponse(
+					this._createGoalFromHost(payload.objective, payload.token_budget, payload.time_budget_seconds),
+					false,
+				);
 			}
 			case "goal.complete":
 				return goalHostResponse(this._completeGoalFromHost(), true);
@@ -3968,7 +4159,11 @@ export class AgentSession {
 		}
 	}
 
-	private _createGoalFromHost(objective: string, tokenBudget: number | undefined): GoalState {
+	private _createGoalFromHost(
+		objective: string,
+		tokenBudget: number | undefined,
+		timeBudgetSeconds?: number,
+	): GoalState {
 		switch (this._goalState.status) {
 			case "active":
 				throw new Error(
@@ -3984,7 +4179,7 @@ export class AgentSession {
 				);
 			default:
 				// idle, or a terminal record (complete / error): nothing pending, start fresh.
-				return this._startGoal(objective, tokenBudget);
+				return this._startGoal(objective, { tokenBudget, timeBudgetSeconds });
 		}
 	}
 
@@ -3993,6 +4188,10 @@ export class AgentSession {
 			throw new Error("cannot complete goal because this thread has no goal");
 		}
 		const goal = this._goalWithAccountedWallClock();
+		if (goalTimeFloorRemainingSeconds(goal) > 0) {
+			this._setGoalState(goal);
+			throw new Error(goalTimeFloorError(goal));
+		}
 		// A turn can cross the budget and complete the goal at once: accounting
 		// runs at message_end, before the completing ipython cell executes, so a
 		// budget-limit context may already be steered. It is stale now — drop it.
@@ -7003,6 +7202,9 @@ export class AgentSession {
 					break;
 				case "autonomous":
 					await this._handleAutonomousSlashCommand(input.text);
+					break;
+				case "24x7":
+					await this._handleAlwaysOnSlashCommand(input.text);
 					break;
 			}
 			if (resultText) {

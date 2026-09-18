@@ -94,8 +94,9 @@ Prime Agent is built for long-running work, especially for evaluations in resear
 - **Direct agent-to-agent communication:** running agents and retained subagents can discover one another, exchange messages, and steer active work.
 - **Daemon-backed continuity:** active sessions, Python REPL state, schedules, and subagents keep running when the terminal detaches and can be reattached later.
 - **Heartbeats and schedules:** `/heartbeat`, `rlm_heartbeat`, and `prime-agent schedule` can re-enter a session periodically or at a specific time.
-- **Persistent goals:** `/goal` keeps an objective and its progress active across turns until it is completed, paused, or cleared.
+- **Persistent goals:** `/goal` keeps an objective and its progress active across turns until it is completed, paused, or cleared. `/goal --for 10h` is host-enforced: `goal.complete()` is rejected until that working time has elapsed.
 - **Bounded autonomous mode:** `/autonomous` continues within configured turn, token, and time budgets and can run user-defined quality gates. A passed gate checks only what that gate verifies; reaching a limit does not imply task success.
+- **24x7 always-on:** `/24x7 on` runs until you stop it. It keeps choosing the next high-ROI task, including SOTA polish and new features, and weighs actions by risk. Token spend is not a stop condition.
 
 ## Documentation
 
